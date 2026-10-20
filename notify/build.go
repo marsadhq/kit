@@ -82,6 +82,22 @@ func BuildProvider(kind ChannelType, cfg []byte) (Provider, error) {
 		}
 		return NewTelegram(c.BotToken, c.ChatID), nil
 
+	case Ntfy:
+		var c NtfyConfig
+		if err := json.Unmarshal(cfg, &c); err != nil {
+			return nil, fmt.Errorf("notify: ntfy config: %w", err)
+		}
+		if c.URL == "" {
+			return nil, fmt.Errorf("notify: ntfy config: missing url")
+		}
+		if _, _, err := ntfyEndpoint(c.URL); err != nil {
+			return nil, fmt.Errorf("notify: ntfy config: %w", err)
+		}
+		if c.Priority < 0 || c.Priority > 5 {
+			return nil, fmt.Errorf("notify: ntfy config: priority %d, want 1 to 5 (or 0 for the server default)", c.Priority)
+		}
+		return NewNtfy(c), nil
+
 	default:
 		return nil, fmt.Errorf("notify: unknown channel kind %q", kind)
 	}

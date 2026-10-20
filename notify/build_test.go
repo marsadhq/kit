@@ -20,6 +20,7 @@ func TestBuildProvider(t *testing.T) {
 		{"discord", notify.Discord, `{"webhook_url":"https://discord.com/api/webhooks/x"}`, (*notify.DiscordProvider)(nil)},
 		{"smtp", notify.SMTP, `{"host":"smtp.example","port":587,"username":"u","password":"p","from":"a@x","to":["b@x"]}`, (*notify.SMTPProvider)(nil)},
 		{"telegram", notify.Telegram, `{"bot_token":"123:abc","chat_id":"-100"}`, (*notify.TelegramProvider)(nil)},
+		{"ntfy", notify.Ntfy, `{"url":"https://ntfy.sh/ward-alerts","token":"tk_x","priority":4,"tags":["warning"]}`, (*notify.NtfyProvider)(nil)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -51,6 +52,10 @@ func TestBuildProvider(t *testing.T) {
 				if _, ok := p.(*notify.TelegramProvider); !ok {
 					t.Fatalf("kind %s: got %T want *TelegramProvider", c.kind, p)
 				}
+			case *notify.NtfyProvider:
+				if _, ok := p.(*notify.NtfyProvider); !ok {
+					t.Fatalf("kind %s: got %T want *NtfyProvider", c.kind, p)
+				}
 			}
 		})
 	}
@@ -74,6 +79,11 @@ func TestBuildProviderErrors(t *testing.T) {
 		{"smtp no recipients", notify.SMTP, `{"host":"smtp.example","port":587,"from":"a@x"}`},
 		{"telegram missing bot_token", notify.Telegram, `{"chat_id":"-100"}`},
 		{"telegram missing chat_id", notify.Telegram, `{"bot_token":"123:abc"}`},
+		{"ntfy missing url", notify.Ntfy, `{"token":"tk_x"}`},
+		{"ntfy no topic", notify.Ntfy, `{"url":"https://ntfy.sh/"}`},
+		{"ntfy not http", notify.Ntfy, `{"url":"ntfy.sh/alerts"}`},
+		{"ntfy priority too high", notify.Ntfy, `{"url":"https://ntfy.sh/alerts","priority":6}`},
+		{"ntfy negative priority", notify.Ntfy, `{"url":"https://ntfy.sh/alerts","priority":-1}`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

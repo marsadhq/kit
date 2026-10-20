@@ -34,6 +34,8 @@ const (
 	SMTP ChannelType = "smtp"
 	// Telegram posts to a chat via the Telegram Bot API.
 	Telegram ChannelType = "telegram"
+	// Ntfy publishes to an ntfy topic, on ntfy.sh or a self-hosted server.
+	Ntfy ChannelType = "ntfy"
 )
 
 // Message is a notification ready to be delivered by a Provider: a rendered
@@ -52,11 +54,28 @@ type Message struct {
 	// format sets it: Tend posts an event.TendWebhook. Other providers ignore
 	// it.
 	Webhook any
+	// Priority is how urgently the message should reach its reader; the zero
+	// value leaves each channel's configured priority.
+	Priority Priority
 	// Actions are buttons the reader can press. Each provider renders the
 	// kinds it supports and leaves out the rest (see ActionKind); a provider
 	// with no buttons ignores them all.
 	Actions []Action
 }
+
+// Priority is how urgently a message should reach its reader, on ntfy's
+// five-step scale. Providers with priorities map it onto theirs (ntfy 1 to 5,
+// Pushover -2 to 2); the others ignore it.
+type Priority int
+
+const (
+	PriorityUnset  Priority = iota // the channel's configured priority
+	PriorityMin                    // no alert at all where the app allows it
+	PriorityLow                    // no sound or vibration
+	PriorityNormal                 // the app's default
+	PriorityHigh                   // stands out, sound even in quiet hours where configured
+	PriorityUrgent                 // as loud as the app gets; Pushover repeats it until acknowledged
+)
 
 // ActionKind is what pressing an Action does.
 type ActionKind string
