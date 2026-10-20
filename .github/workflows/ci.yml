@@ -1,0 +1,47 @@
+# CI for kit: gofmt check, go vet, and the full test suite under -race.
+#
+# The race detector needs CGO, which GitHub's ubuntu-latest runner provides by
+# default (gcc is installed, CGO_ENABLED=1). Do not set CGO_ENABLED=0 here: it
+# would silently turn the race detector off.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Format, vet & test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          # The latest Go 1.26 patch release.
+          go-version: "1.26.x"
+
+      # gofmt -l prints the files that are not formatted; any output fails.
+      - name: Check formatting (gofmt)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (-race)
+        run: go test ./... -race -count=1
