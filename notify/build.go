@@ -98,6 +98,16 @@ func BuildProvider(kind ChannelType, cfg []byte) (Provider, error) {
 		}
 		return NewNtfy(c), nil
 
+	case Pushover:
+		var c PushoverConfig
+		if err := json.Unmarshal(cfg, &c); err != nil {
+			return nil, fmt.Errorf("notify: pushover config: %w", err)
+		}
+		if err := c.validate(); err != nil {
+			return nil, fmt.Errorf("notify: pushover config: %w", err)
+		}
+		return NewPushover(c), nil
+
 	default:
 		return nil, fmt.Errorf("notify: unknown channel kind %q", kind)
 	}

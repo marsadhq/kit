@@ -21,6 +21,8 @@ func TestBuildProvider(t *testing.T) {
 		{"smtp", notify.SMTP, `{"host":"smtp.example","port":587,"username":"u","password":"p","from":"a@x","to":["b@x"]}`, (*notify.SMTPProvider)(nil)},
 		{"telegram", notify.Telegram, `{"bot_token":"123:abc","chat_id":"-100"}`, (*notify.TelegramProvider)(nil)},
 		{"ntfy", notify.Ntfy, `{"url":"https://ntfy.sh/ward-alerts","token":"tk_x","priority":4,"tags":["warning"]}`, (*notify.NtfyProvider)(nil)},
+		{"pushover", notify.Pushover, `{"token":"a","user":"u"}`, (*notify.PushoverProvider)(nil)},
+		{"pushover emergency", notify.Pushover, `{"token":"a","user":"u","priority":2,"retry":30,"expire":10800,"device":"d","sound":"siren"}`, (*notify.PushoverProvider)(nil)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -56,6 +58,10 @@ func TestBuildProvider(t *testing.T) {
 				if _, ok := p.(*notify.NtfyProvider); !ok {
 					t.Fatalf("kind %s: got %T want *NtfyProvider", c.kind, p)
 				}
+			case *notify.PushoverProvider:
+				if _, ok := p.(*notify.PushoverProvider); !ok {
+					t.Fatalf("kind %s: got %T want *PushoverProvider", c.kind, p)
+				}
 			}
 		})
 	}
@@ -84,6 +90,14 @@ func TestBuildProviderErrors(t *testing.T) {
 		{"ntfy not http", notify.Ntfy, `{"url":"ntfy.sh/alerts"}`},
 		{"ntfy priority too high", notify.Ntfy, `{"url":"https://ntfy.sh/alerts","priority":6}`},
 		{"ntfy negative priority", notify.Ntfy, `{"url":"https://ntfy.sh/alerts","priority":-1}`},
+		{"pushover malformed json", notify.Pushover, `{"token":`},
+		{"pushover missing token", notify.Pushover, `{"user":"u"}`},
+		{"pushover missing user", notify.Pushover, `{"token":"a"}`},
+		{"pushover priority too high", notify.Pushover, `{"token":"a","user":"u","priority":3}`},
+		{"pushover priority too low", notify.Pushover, `{"token":"a","user":"u","priority":-3}`},
+		{"pushover retry too short", notify.Pushover, `{"token":"a","user":"u","priority":2,"retry":10}`},
+		{"pushover expire too long", notify.Pushover, `{"token":"a","user":"u","priority":2,"expire":10801}`},
+		{"pushover negative expire", notify.Pushover, `{"token":"a","user":"u","expire":-1}`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

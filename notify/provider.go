@@ -36,6 +36,8 @@ const (
 	Telegram ChannelType = "telegram"
 	// Ntfy publishes to an ntfy topic, on ntfy.sh or a self-hosted server.
 	Ntfy ChannelType = "ntfy"
+	// Pushover sends a push through the Pushover messages API.
+	Pushover ChannelType = "pushover"
 )
 
 // Message is a notification ready to be delivered by a Provider: a rendered
