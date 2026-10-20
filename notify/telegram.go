@@ -33,11 +33,26 @@ func NewTelegram(token, chatID string) *TelegramProvider {
 // net/http quotes the full request URL (whose path contains the token) in both
 // request-construction and transport errors, so every error goes through
 // urlredact.Error and names only the API host.
+//
+// When m has link or callback actions they become an inline keyboard under
+// the message (reply_markup): a link is a URL button, a callback a
+// callback_data button the tool's bot receives as a callback query. HTTP
+// actions have no Telegram form and are left out. A button Telegram would
+// refuse (no label, no URL, callback data empty or over 64 bytes) fails the
+// send as a permanent error, before anything is sent.
 func (p *TelegramProvider) Send(ctx context.Context, m Message) error {
-	body, err := json.Marshal(map[string]string{
+	payload := map[string]any{
 		"chat_id": p.chatID,
 		"text":    m.Subject + "\n" + m.Body,
-	})
+	}
+	keyboard, err := telegramKeyboard(actionsOf(m, ActionLink, ActionCallback))
+	if err != nil {
+		return Permanent(err)
+	}
+	if keyboard != nil {
+		payload["reply_markup"] = keyboard
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
@@ -58,6 +73,53 @@ func (p *TelegramProvider) Send(ctx context.Context, m Message) error {
 		return httpStatusError("telegram sendMessage", resp.StatusCode)
 	}
 	return nil
+}
+
+// telegramButtonsPerRow is the most buttons Telegram puts in one keyboard
+// row; more wrap onto the next row.
+const telegramButtonsPerRow = 8
+
+// telegramMaxCallbackData is Telegram's limit on callback_data, in bytes.
+const telegramMaxCallbackData = 64
+
+// telegramButton is an InlineKeyboardButton: text plus exactly one of url and
+// callback_data.
+type telegramButton struct {
+	Text         string `json:"text"`
+	URL          string `json:"url,omitempty"`
+	CallbackData string `json:"callback_data,omitempty"`
+}
+
+// telegramKeyboard builds the InlineKeyboardMarkup for actions, or nil when
+// there are none. The error never quotes a URL or callback data.
+func telegramKeyboard(actions []Action) (map[string][][]telegramButton, error) {
+	if len(actions) == 0 {
+		return nil, nil
+	}
+	var rows [][]telegramButton
+	for i, a := range actions {
+		if a.Label == "" {
+			return nil, fmt.Errorf("telegram: button %d has no label", i+1)
+		}
+		b := telegramButton{Text: a.Label}
+		switch a.Kind {
+		case ActionLink:
+			if a.URL == "" {
+				return nil, fmt.Errorf("telegram: button %q has no URL", a.Label)
+			}
+			b.URL = a.URL
+		case ActionCallback:
+			if n := len(a.Data); n == 0 || n > telegramMaxCallbackData {
+				return nil, fmt.Errorf("telegram: button %q callback data is %d bytes, want 1 to %d", a.Label, n, telegramMaxCallbackData)
+			}
+			b.CallbackData = a.Data
+		}
+		if len(rows) == 0 || len(rows[len(rows)-1]) == telegramButtonsPerRow {
+			rows = append(rows, nil)
+		}
+		rows[len(rows)-1] = append(rows[len(rows)-1], b)
+	}
+	return map[string][][]telegramButton{"inline_keyboard": rows}, nil
 }
 
 // Compile-time assertion: TelegramProvider must satisfy the Provider interface.

@@ -52,6 +52,78 @@ type Message struct {
 	// format sets it: Tend posts an event.TendWebhook. Other providers ignore
 	// it.
 	Webhook any
+	// Actions are buttons the reader can press. Each provider renders the
+	// kinds it supports and leaves out the rest (see ActionKind); a provider
+	// with no buttons ignores them all.
+	Actions []Action
+}
+
+// ActionKind is what pressing an Action does.
+type ActionKind string
+
+const (
+	// ActionLink opens URL in the reader's browser. Telegram shows a URL
+	// button, ntfy a view action; Pushover uses the first link as the
+	// message's supplementary URL.
+	ActionLink ActionKind = "link"
+	// ActionHTTP makes the receiving app send an HTTP request to URL (Method,
+	// Headers, Body) without opening anything: an "Acknowledge" button that
+	// calls the tool's API. ntfy shows an http action. At emergency priority
+	// Pushover posts its own acknowledgement to the first HTTP action's URL
+	// (its callback) once the reader acknowledges, ignoring Method, Headers
+	// and Body.
+	ActionHTTP ActionKind = "http"
+	// ActionCallback hands Data back to the tool's own chat bot when pressed:
+	// a Telegram callback_data button, which the bot receives as a callback
+	// query.
+	ActionCallback ActionKind = "callback"
+)
+
+// Action is one button on a Message.
+type Action struct {
+	Kind  ActionKind
+	Label string // the button text; required
+	// URL is the page to open (ActionLink) or the endpoint to call
+	// (ActionHTTP).
+	URL string
+	// Method, Headers and Body shape an ActionHTTP request. An empty Method
+	// means POST.
+	Method  string
+	Headers map[string]string
+	Body    string
+	// Data is what an ActionCallback hands the bot: 1 to 64 bytes, Telegram's
+	// limit.
+	Data string
+	// Clear dismisses the notification once the action has run, where the
+	// app supports it (ntfy).
+	Clear bool
+}
+
+// LinkAction is an ActionLink button opening url.
+func LinkAction(label, url string) Action { return Action{Kind: ActionLink, Label: label, URL: url} }
+
+// HTTPAction is an ActionHTTP button sending a method request to url.
+func HTTPAction(label, method, url string) Action {
+	return Action{Kind: ActionHTTP, Label: label, Method: method, URL: url}
+}
+
+// CallbackAction is an ActionCallback button handing data to the tool's bot.
+func CallbackAction(label, data string) Action {
+	return Action{Kind: ActionCallback, Label: label, Data: data}
+}
+
+// actionsOf returns m's actions of the given kinds, in order.
+func actionsOf(m Message, kinds ...ActionKind) []Action {
+	var out []Action
+	for _, a := range m.Actions {
+		for _, k := range kinds {
+			if a.Kind == k {
+				out = append(out, a)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // Provider delivers a Message to a single destination. Implementations should
