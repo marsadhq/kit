@@ -112,3 +112,44 @@ func TestTelegramRequestBuildErrorNeverLeaksToken(t *testing.T) {
 		t.Errorf("error should name the method and keep the cause: %v", err)
 	}
 }
+
+// TestTelegramQuietMessagesDoNotRing: a message sent at low or minimum
+// priority asks Telegram to deliver it silently; every other priority, the
+// unset one included, leaves the field out so the request is unchanged.
+func TestTelegramQuietMessagesDoNotRing(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = nil
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	old := telegramAPIBase
+	telegramAPIBase = srv.URL
+	defer func() { telegramAPIBase = old }()
+
+	p := NewTelegram("1:x", "2")
+	cases := []struct {
+		prio  Priority
+		quiet bool
+	}{
+		{PriorityUnset, false},
+		{PriorityMin, true},
+		{PriorityLow, true},
+		{PriorityNormal, false},
+		{PriorityHigh, false},
+		{PriorityUrgent, false},
+	}
+	for _, c := range cases {
+		if err := p.Send(context.Background(), Message{Subject: "s", Body: "b", Priority: c.prio}); err != nil {
+			t.Fatalf("priority %d: Send: %v", c.prio, err)
+		}
+		v, present := got["disable_notification"]
+		if c.quiet && v != true {
+			t.Errorf("priority %d: disable_notification = %v, want true", c.prio, v)
+		}
+		if !c.quiet && present {
+			t.Errorf("priority %d: disable_notification present (%v), want it left out", c.prio, v)
+		}
+	}
+}

@@ -29,7 +29,8 @@ func NewTelegram(token, chatID string) *TelegramProvider {
 }
 
 // Send POSTs {chat_id, text} to the Bot API sendMessage method, where text is
-// the subject and body joined by a newline (same composition as Slack/Discord).
+// the subject and body joined by a newline (same composition as Slack/Discord),
+// with disable_notification set for a low or minimum priority message.
 // net/http quotes the full request URL (whose path contains the token) in both
 // request-construction and transport errors, so every error goes through
 // urlredact.Error and names only the API host.
@@ -44,6 +45,11 @@ func (p *TelegramProvider) Send(ctx context.Context, m Message) error {
 	payload := map[string]any{
 		"chat_id": p.chatID,
 		"text":    m.Subject + "\n" + m.Body,
+	}
+	// A low or minimum priority message arrives without sound; the field is
+	// left out otherwise so other messages are sent exactly as before.
+	if m.Priority == PriorityMin || m.Priority == PriorityLow {
+		payload["disable_notification"] = true
 	}
 	keyboard, err := telegramKeyboard(actionsOf(m, ActionLink, ActionCallback))
 	if err != nil {
