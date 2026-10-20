@@ -1,0 +1,1 @@
+{"body":"status=failed exit_code=1","event":{"ID":101,"OrgID":1,"Type":"run.failed","Source":"jobs.runner","Payload":"{\"run_id\":41,\"job_id\":7,\"job_name\":\"backup\",\"status\":\"failed\",\"exit_code\":1}","DedupKey":"run:41:run.failed","CreatedAt":"2026-10-09T10:00:00.297609739Z"},"subject":"Job failed: backup"}

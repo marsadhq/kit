@@ -1,0 +1,1 @@
+{"body":"status=succeeded exit_code=0; the previous run had not succeeded","event":{"ID":102,"OrgID":1,"Type":"run.recovered","Source":"jobs.runner","Payload":"{\"run_id\":42,\"job_id\":7,\"job_name\":\"backup\",\"status\":\"succeeded\",\"exit_code\":0}","DedupKey":"run:42:run.recovered","CreatedAt":"2026-10-09T10:01:00.297609739Z"},"subject":"Job recovered: backup"}

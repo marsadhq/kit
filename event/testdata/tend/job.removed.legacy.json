@@ -1,0 +1,1 @@
+{"body":"the job was deleted; it will not run or alert again","event":{"ID":105,"OrgID":1,"Type":"job.removed","Source":"jobs","Payload":"{\"job_id\":7,\"job_name\":\"backup\"}","DedupKey":"job:7:removed","CreatedAt":"2026-10-09T10:04:00.297609739Z"},"subject":"Job removed: backup"}

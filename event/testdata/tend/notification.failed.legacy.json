@@ -1,0 +1,1 @@
+{"body":"a heartbeat.missed notification could not be delivered and was given up after retrying; that alert was not received","event":{"ID":107,"OrgID":1,"Type":"notification.failed","Source":"notify","Payload":"heartbeat.missed","DedupKey":"","CreatedAt":"2026-10-09T10:06:00.297609739Z"},"subject":"Alert delivery failed: heartbeat.missed"}

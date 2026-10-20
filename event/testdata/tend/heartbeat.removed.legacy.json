@@ -1,0 +1,1 @@
+{"body":"the heartbeat was deleted; it is no longer monitored","event":{"ID":106,"OrgID":1,"Type":"heartbeat.removed","Source":"heartbeat","Payload":"db-backup","DedupKey":"","CreatedAt":"2026-10-09T10:05:00.297609739Z"},"subject":"Heartbeat removed: db-backup"}
