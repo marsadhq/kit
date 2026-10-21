@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/marsadhq/kit/event"
@@ -96,8 +97,8 @@ type DiscordProvider struct{ url string }
 // NewDiscord constructs a DiscordProvider that posts to the given Discord webhook URL.
 func NewDiscord(url string) *DiscordProvider { return &DiscordProvider{url} }
 
-// discordMaxContent is the most characters Discord takes in a message's
-// content; it refuses more.
+// discordMaxContent is the most a message's content may be, in UTF-16 code
+// units, which is how Discord counts it; it refuses more.
 const discordMaxContent = 2000
 
 // discordPayload is what the Discord provider posts: the content, and
@@ -114,9 +115,10 @@ type discordAllowedMentions struct {
 
 // Send posts the message subject and body joined by a newline, and its Output
 // in a code block after them, to the Discord webhook, with no mention allowed
-// to ping. Content over Discord's 2000 characters is cut: Output from its
-// start, so that its end stays, and otherwise the text at its end. It
-// returns an error when the HTTP response is non-2xx.
+// to ping. Subject and body are escaped (discordEscape). Content over
+// Discord's limit is cut: Output from its start, so that its end stays, and
+// otherwise the text at its end. It returns an error when the HTTP response
+// is non-2xx.
 func (p *DiscordProvider) Send(ctx context.Context, m Message) error {
 	return postJSON(ctx, p.url, discordPayload{
 		Content:         discordContent(m),
@@ -124,24 +126,79 @@ func (p *DiscordProvider) Send(ctx context.Context, m Message) error {
 	})
 }
 
+// discordEscape backslash-escapes, in text the tool did not mark up, the
+// characters Discord builds a masked link ([label](url), which shows a label
+// of the sender's choosing) and mention-like constructs (<@123>, <#123>,
+// <@&123>) from: \ [ ] < >. Discord shows them as typed. A plain URL stays a
+// link to itself.
+func discordEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, "[", `\[`, "]", `\]`, "<", `\<`, ">", `\>`).Replace(s)
+}
+
+// DiscordOutputLength is how much of Discord's limit Output s takes once the
+// Discord provider sends it: its UTF-16 code units, a backtick counting
+// twice (it is sent followed by a zero-width space, unfence).
+func DiscordOutputLength(s string) int { return utf16Len(s) + strings.Count(s, "`") }
+
+// DiscordOutputRoom is how much of Discord's limit the Discord provider
+// leaves for m's Output, measured like DiscordOutputLength: what is left
+// after m's subject and body, escaped, and the code block's fences. A tool
+// that fits its output itself (to keep something other than its end) cuts
+// it to this; the provider cuts longer output from its start.
+func DiscordOutputRoom(m Message) int {
+	return discordMaxContent - utf16Len(discordEscape(m.Subject+"\n"+m.Body)+"\n```\n\n```")
+}
+
 // discordContent is m's content as the Discord provider posts it, at most
-// discordMaxContent characters.
+// discordMaxContent UTF-16 code units.
 func discordContent(m Message) string {
-	text := m.Subject + "\n" + m.Body
+	text := discordEscape(m.Subject + "\n" + m.Body)
 	if m.Output != "" {
-		head, tail := text+"\n```\n", "\n```"
 		out := unfence(m.Output)
-		if room := discordMaxContent - utf8.RuneCountInString(head+tail); utf8.RuneCountInString(out) > room && room > 1 {
-			r := []rune(out)
-			out = "…" + string(r[len(r)-(room-1):])
+		if room := DiscordOutputRoom(m); utf16Len(out) > room && room > 1 {
+			out = "…" + lastUnits(out, room-1)
 		}
-		text = head + out + tail
+		text += "\n```\n" + out + "\n```"
 	}
-	if utf8.RuneCountInString(text) > discordMaxContent {
-		r := []rune(text)
-		text = string(r[:discordMaxContent-1]) + "…"
+	if utf16Len(text) > discordMaxContent {
+		text = firstUnits(text, discordMaxContent-1) + "…"
 	}
 	return text
+}
+
+// utf16Len is the length of s in UTF-16 code units.
+func utf16Len(s string) int {
+	n := 0
+	for _, r := range s {
+		n += utf16.RuneLen(r)
+	}
+	return n
+}
+
+// firstUnits is the longest start of s, whole characters, of at most n
+// UTF-16 code units.
+func firstUnits(s string, n int) string {
+	used := 0
+	for i, r := range s {
+		if used += utf16.RuneLen(r); used > n {
+			return s[:i]
+		}
+	}
+	return s
+}
+
+// lastUnits is the longest end of s, whole characters, of at most n UTF-16
+// code units.
+func lastUnits(s string, n int) string {
+	used, start := 0, len(s)
+	for start > 0 {
+		r, size := utf8.DecodeLastRuneInString(s[:start])
+		if used += utf16.RuneLen(r); used > n {
+			break
+		}
+		start -= size
+	}
+	return s[start:]
 }
 
 // WebhookProvider delivers notifications to a generic HTTP endpoint as JSON.
