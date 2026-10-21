@@ -81,8 +81,8 @@ type Message struct {
 	// sent as Pushover's tags (each 1 to 64 letters, digits, '-', '_' or
 	// '='), so PushoverProvider.CancelByTag can stop the message's repeats
 	// without its receipt: every copy, should it be sent twice. Pushover
-	// takes no tags below emergency priority, and other providers ignore
-	// them.
+	// takes no tags below emergency priority, where they are neither sent
+	// nor checked, and other providers ignore them.
 	PushoverTags []string
 }
 

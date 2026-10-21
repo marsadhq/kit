@@ -173,7 +173,8 @@ func (p *PushoverProvider) form(m Message) url.Values {
 // cut to Pushover's limits. Message.Priority maps onto Pushover's scale
 // (PriorityUrgent is emergency, with the channel's retry and expire, the
 // first HTTP action's URL as the acknowledgement callback and PushoverTags as
-// its tags; a tag that is not one is permanent); the first link
+// its tags, a tag that is not one being permanent; below emergency tags are
+// neither sent nor checked); the first link
 // action becomes the supplementary URL and its label the URL title; callback
 // actions have no Pushover form.
 //
@@ -192,9 +193,11 @@ func (p *PushoverProvider) Send(ctx context.Context, m Message) error {
 // It is "" for any other message, and when the answer names none (or
 // something that is no receipt): the message was sent all the same.
 func (p *PushoverProvider) SendReceipt(ctx context.Context, m Message) (string, error) {
-	for _, tag := range m.PushoverTags {
-		if !pushoverTagPattern.MatchString(tag) {
-			return "", Permanent(errPushoverTag)
+	if p.priority(m) == PushoverEmergency { // the only messages tags are sent with
+		for _, tag := range m.PushoverTags {
+			if !pushoverTagPattern.MatchString(tag) {
+				return "", Permanent(errPushoverTag)
+			}
 		}
 	}
 	answer, code, err := p.post(ctx, pushoverAPIURL, "pushover messages", p.form(m))

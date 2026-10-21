@@ -263,3 +263,29 @@ func TestPushoverCancelByTag(t *testing.T) {
 		}
 	}
 }
+
+// TestPushoverIgnoresTagsBelowEmergency: Pushover takes tags only on an
+// emergency message, so below emergency priority they are neither sent nor
+// checked: a tag that is not one costs no quiet message.
+func TestPushoverIgnoresTagsBelowEmergency(t *testing.T) {
+	calls := pushoverAPI(t, func(string) (int, http.Header, string) { return 200, nil, pushoverOK })
+	p := NewPushover(PushoverConfig{Token: "t", User: "u"})
+	for _, prio := range []Priority{PriorityLow, PriorityUnset, PriorityHigh} {
+		if err := p.Send(context.Background(), Message{Subject: "s", Priority: prio, PushoverTags: []string{"a,b"}}); err != nil {
+			t.Errorf("priority %d: Send = %v, want sent", prio, err)
+		}
+	}
+	if len(*calls) != 3 {
+		t.Fatalf("%d requests, want 3", len(*calls))
+	}
+	for _, c := range *calls {
+		if c.form.Has("tags") {
+			t.Errorf("tags sent below emergency priority: %v", c.form)
+		}
+	}
+	// A channel whose own priority is emergency sends and checks them.
+	if err := NewPushover(PushoverConfig{Token: "t", User: "u", Priority: PushoverEmergency}).Send(context.Background(),
+		Message{Subject: "s", PushoverTags: []string{"a,b"}}); err == nil || !IsPermanent(err) {
+		t.Errorf("emergency by the channel's priority: Send = %v, want permanent", err)
+	}
+}
