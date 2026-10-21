@@ -48,6 +48,13 @@ type Message struct {
 	Subject string
 	// Body is the detail text.
 	Body string
+	// Output, when non-empty, is text the tool passes on without having
+	// written it (a job's output, the body a ping logged), which must reach
+	// the reader as text, never as markup, a mention or a link with a label
+	// of its own. Slack and Discord show it after the body in a code block,
+	// its backticks kept from closing the block. The other providers do not
+	// read it: a tool sending to them puts it in the body (WithOutputInBody).
+	Output string
 	// Event is the Marsad event the message reports, if there is one. The
 	// webhook provider posts it under "marsad" unless Webhook is set.
 	Event *event.V1
@@ -84,6 +91,21 @@ type Message struct {
 	// takes no tags below emergency priority, where they are neither sent
 	// nor checked, and other providers ignore them.
 	PushoverTags []string
+}
+
+// WithOutputInBody returns m with its Output after its Body, on the next
+// line, and no Output: the message for a provider that shows plain text and
+// has no form of its own for Output.
+func (m Message) WithOutputInBody() Message {
+	switch {
+	case m.Output == "":
+	case m.Body == "":
+		m.Body = m.Output
+	default:
+		m.Body += "\n" + m.Output
+	}
+	m.Output = ""
+	return m
 }
 
 // Priority is how urgently a message should reach its reader, on ntfy's
