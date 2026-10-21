@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -178,38 +179,125 @@ func (p *PushoverProvider) form(m Message) url.Values {
 // and other failures ask the worker for that wait (RetryLater). Errors carry
 // Pushover's own explanation but never the token or user key.
 func (p *PushoverProvider) Send(ctx context.Context, m Message) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, pushoverAPIURL, strings.NewReader(p.form(m).Encode()))
+	_, err := p.SendReceipt(ctx, m)
+	return err
+}
+
+// SendReceipt is Send, reporting the receipt Pushover gives an
+// emergency-priority message: what CancelReceipt needs to stop its repeats.
+// It is "" for any other message, and when the answer names none (or
+// something that is no receipt): the message was sent all the same.
+func (p *PushoverProvider) SendReceipt(ctx context.Context, m Message) (string, error) {
+	answer, code, err := p.post(ctx, pushoverAPIURL, "pushover messages", p.form(m))
 	if err != nil {
-		return fmt.Errorf("pushover messages %w", urlredact.Error(pushoverAPIURL, err))
+		return "", err
+	}
+	if code < 200 || code >= 300 || answer.Status != 1 {
+		err := p.refusal("pushover messages", code, answer)
+		if code >= 400 && code < 500 {
+			return "", Permanent(err)
+		}
+		return "", RetryLater(err, pushoverRetryWait)
+	}
+	if !pushoverReceiptPattern.MatchString(answer.Receipt) {
+		return "", nil
+	}
+	return answer.Receipt, nil
+}
+
+// pushoverReceiptPattern is what Ward accepts as a receipt: Pushover's are
+// 30 letters and digits, and one goes into a URL path.
+var pushoverReceiptPattern = regexp.MustCompile(`^[A-Za-z0-9]{1,64}$`)
+
+// pushoverLimitedWait is how long a rate-limited receipt call waits when
+// Pushover does not say.
+const pushoverLimitedWait = time.Minute
+
+// CancelReceipt stops the repeats of the emergency-priority message receipt
+// names (POST receipts/{receipt}/cancel.json with the application's token):
+// the notification stays on the phone but no longer alerts. A receipt that
+// is not one is refused before any request.
+//
+// A 4xx answer is permanent, as Pushover asks never to repeat one: it is how
+// Pushover answers a receipt that expired, was never its own, or a bad token.
+// A 429 asks to wait its Retry-After (a minute when it gives none) and is not
+// permanent; other failures ask for Pushover's five seconds (RetryLater).
+// StatusCode reads an answer's status. No error carries the token.
+func (p *PushoverProvider) CancelReceipt(ctx context.Context, receipt string) error {
+	if !pushoverReceiptPattern.MatchString(receipt) {
+		return Permanent(errors.New("pushover: a receipt is 1 to 64 letters and digits"))
+	}
+	what := "pushover receipt cancel"
+	rawURL := strings.TrimSuffix(pushoverAPIURL, "messages.json") + "receipts/" + receipt + "/cancel.json"
+	v := url.Values{}
+	v.Set("token", p.c.Token)
+	answer, code, err := p.post(ctx, rawURL, what, v)
+	if err != nil {
+		return err
+	}
+	if code >= 200 && code < 300 && answer.Status == 1 {
+		return nil
+	}
+	err = p.refusal(what, code, answer)
+	switch {
+	case code == http.StatusTooManyRequests:
+		return RetryLater(err, retryAfterHeader(answer.header, pushoverLimitedWait))
+	case code >= 400 && code < 500:
+		return Permanent(err)
+	}
+	return RetryLater(err, pushoverRetryWait)
+}
+
+// pushoverAnswer is the part of a Pushover API answer kit reads.
+type pushoverAnswer struct {
+	Status  int      `json:"status"`
+	Errors  []string `json:"errors"`
+	Receipt string   `json:"receipt"`
+	header  http.Header
+}
+
+// post sends form to one of Pushover's endpoints and reads its answer. Only a
+// failure to get an answer is an error here (retryable after Pushover's
+// wait); the caller classifies the answer.
+func (p *PushoverProvider) post(ctx context.Context, rawURL, what string, form url.Values) (pushoverAnswer, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return pushoverAnswer{}, 0, fmt.Errorf("%s %w", what, urlredact.Error(rawURL, err))
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return RetryLater(fmt.Errorf("pushover messages %w", urlredact.Error(pushoverAPIURL, err)), pushoverRetryWait)
+		return pushoverAnswer{}, 0, RetryLater(fmt.Errorf("%s %w", what, urlredact.Error(rawURL, err)), pushoverRetryWait)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	_, _ = io.Copy(io.Discard, resp.Body)
-
-	var answer struct {
-		Status int      `json:"status"`
-		Errors []string `json:"errors"`
-	}
+	var answer pushoverAnswer
 	_ = json.Unmarshal(raw, &answer) // an unreadable answer leaves status 0: not accepted
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 && answer.Status == 1 {
-		return nil
-	}
-	err = fmt.Errorf("pushover messages %s: status %d", urlredact.Host(pushoverAPIURL), resp.StatusCode)
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	answer.header = resp.Header
+	return answer, resp.StatusCode, nil
+}
+
+// refusal is the error for an answer Pushover did not accept: its status
+// (StatusCode reads it), and Pushover's explanation without the token or
+// user key.
+func (p *PushoverProvider) refusal(what string, code int, answer pushoverAnswer) error {
+	var err error = &statusError{what: what + " " + urlredact.Host(pushoverAPIURL), code: code}
+	if code >= 200 && code < 300 {
 		err = fmt.Errorf("%w without the accepted answer", err)
 	}
 	if len(answer.Errors) > 0 {
 		err = fmt.Errorf("%w: %s", err, detail(strings.Join(answer.Errors, "; "), p.c.Token, p.c.User))
 	}
-	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-		return Permanent(err)
+	return err
+}
+
+// retryAfterHeader reads a Retry-After header given in seconds, else def.
+func retryAfterHeader(h http.Header, def time.Duration) time.Duration {
+	if s, err := strconv.Atoi(strings.TrimSpace(h.Get("Retry-After"))); err == nil && s > 0 {
+		return time.Duration(s) * time.Second
 	}
-	return RetryLater(err, pushoverRetryWait)
+	return def
 }
 
 // Compile-time assertion: PushoverProvider must satisfy the Provider interface.
