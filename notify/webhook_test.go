@@ -151,7 +151,8 @@ func TestWebhookProviderPostsTendsBody(t *testing.T) {
 }
 
 // TestWebhookIgnoredElsewhere: the tool's webhook body and the event are for
-// the webhook provider only; Slack and Discord still post subject and body.
+// the webhook provider only; Slack and Discord still post subject and body
+// (Discord with no mention allowed to ping).
 func TestWebhookIgnoredElsewhere(t *testing.T) {
 	srv, _, _, gotBody := captureServer(200)
 	defer srv.Close()
@@ -159,7 +160,7 @@ func TestWebhookIgnoredElsewhere(t *testing.T) {
 	if err := notify.NewSlack(srv.URL).Send(context.Background(), m); err != nil || *gotBody != `{"text":"s\nb"}` {
 		t.Errorf("slack posted %s (err %v)", *gotBody, err)
 	}
-	if err := notify.NewDiscord(srv.URL).Send(context.Background(), m); err != nil || *gotBody != `{"content":"s\nb"}` {
+	if err := notify.NewDiscord(srv.URL).Send(context.Background(), m); err != nil || *gotBody != `{"content":"s\nb","allowed_mentions":{"parse":[]}}` {
 		t.Errorf("discord posted %s (err %v)", *gotBody, err)
 	}
 }

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/marsadhq/kit/event"
 	"github.com/marsadhq/kit/urlredact"
@@ -61,11 +63,31 @@ type SlackProvider struct{ url string }
 // NewSlack constructs a SlackProvider that posts to the given incoming webhook URL.
 func NewSlack(url string) *SlackProvider { return &SlackProvider{url} }
 
-// Send posts the message subject and body joined by a newline to the Slack
-// webhook. It returns an error when the HTTP response is non-2xx.
+// Send posts the message subject and body joined by a newline, and its Output
+// in a code block after them, to the Slack webhook. The text is escaped
+// (slackEscape): Slack reads <...> as a mention (<!channel>, <@U123>) or as a
+// link with a label of the sender's choosing, and a subject or body can carry
+// text from anyone (a job's name, an alert's title). It returns an error when
+// the HTTP response is non-2xx.
 func (p *SlackProvider) Send(ctx context.Context, m Message) error {
-	return postJSON(ctx, p.url, map[string]string{"text": m.Subject + "\n" + m.Body})
+	text := slackEscape(m.Subject + "\n" + m.Body)
+	if m.Output != "" {
+		text += "\n```\n" + slackEscape(unfence(m.Output)) + "\n```"
+	}
+	return postJSON(ctx, p.url, map[string]string{"text": text})
 }
+
+// slackEscape escapes the three characters Slack's text format gives a
+// meaning to, as Slack asks: & as &amp;, < as &lt;, > as &gt;. Slack shows
+// them as typed.
+func slackEscape(s string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
+}
+
+// unfence keeps s from closing a ``` code block it is shown in: every
+// backtick is followed by a zero-width space, so no two are next to each
+// other.
+func unfence(s string) string { return strings.ReplaceAll(s, "`", "`\u200b") }
 
 // DiscordProvider delivers notifications to a Discord webhook URL. The
 // message is encoded as a Discord-compatible {"content": "…"} payload.
@@ -74,10 +96,52 @@ type DiscordProvider struct{ url string }
 // NewDiscord constructs a DiscordProvider that posts to the given Discord webhook URL.
 func NewDiscord(url string) *DiscordProvider { return &DiscordProvider{url} }
 
-// Send posts the message subject and body joined by a newline to the Discord
-// webhook. It returns an error when the HTTP response is non-2xx.
+// discordMaxContent is the most characters Discord takes in a message's
+// content; it refuses more.
+const discordMaxContent = 2000
+
+// discordPayload is what the Discord provider posts: the content, and
+// allowed_mentions with nothing to parse, so that no @everyone, @here, user
+// or role mention in it pings anyone.
+type discordPayload struct {
+	Content         string                 `json:"content"`
+	AllowedMentions discordAllowedMentions `json:"allowed_mentions"`
+}
+
+type discordAllowedMentions struct {
+	Parse []string `json:"parse"`
+}
+
+// Send posts the message subject and body joined by a newline, and its Output
+// in a code block after them, to the Discord webhook, with no mention allowed
+// to ping. Content over Discord's 2000 characters is cut: Output from its
+// start, so that its end stays, and otherwise the text at its end. It
+// returns an error when the HTTP response is non-2xx.
 func (p *DiscordProvider) Send(ctx context.Context, m Message) error {
-	return postJSON(ctx, p.url, map[string]string{"content": m.Subject + "\n" + m.Body})
+	return postJSON(ctx, p.url, discordPayload{
+		Content:         discordContent(m),
+		AllowedMentions: discordAllowedMentions{Parse: []string{}},
+	})
+}
+
+// discordContent is m's content as the Discord provider posts it, at most
+// discordMaxContent characters.
+func discordContent(m Message) string {
+	text := m.Subject + "\n" + m.Body
+	if m.Output != "" {
+		head, tail := text+"\n```\n", "\n```"
+		out := unfence(m.Output)
+		if room := discordMaxContent - utf8.RuneCountInString(head+tail); utf8.RuneCountInString(out) > room && room > 1 {
+			r := []rune(out)
+			out = "…" + string(r[len(r)-(room-1):])
+		}
+		text = head + out + tail
+	}
+	if utf8.RuneCountInString(text) > discordMaxContent {
+		r := []rune(text)
+		text = string(r[:discordMaxContent-1]) + "…"
+	}
+	return text
 }
 
 // WebhookProvider delivers notifications to a generic HTTP endpoint as JSON.
