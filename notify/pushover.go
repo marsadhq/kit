@@ -147,6 +147,9 @@ func (p *PushoverProvider) form(m Message) url.Values {
 		if ack := actionsOf(m, ActionHTTP); len(ack) > 0 && ack[0].URL != "" {
 			v.Set("callback", ack[0].URL)
 		}
+		if len(m.PushoverTags) > 0 {
+			v.Set("tags", strings.Join(m.PushoverTags, ","))
+		}
 	}
 	// The first link becomes the supplementary URL. One Pushover would refuse
 	// as too long is left out rather than cut, which would break it.
@@ -168,8 +171,9 @@ func (p *PushoverProvider) form(m Message) url.Values {
 // Send posts m to the messages API: the subject as the title and the body as
 // the message (the subject alone is the message when there is no body), both
 // cut to Pushover's limits. Message.Priority maps onto Pushover's scale
-// (PriorityUrgent is emergency, with the channel's retry and expire, and the
-// first HTTP action's URL as the acknowledgement callback); the first link
+// (PriorityUrgent is emergency, with the channel's retry and expire, the
+// first HTTP action's URL as the acknowledgement callback and PushoverTags as
+// its tags; a tag that is not one is permanent); the first link
 // action becomes the supplementary URL and its label the URL title; callback
 // actions have no Pushover form.
 //
@@ -188,6 +192,11 @@ func (p *PushoverProvider) Send(ctx context.Context, m Message) error {
 // It is "" for any other message, and when the answer names none (or
 // something that is no receipt): the message was sent all the same.
 func (p *PushoverProvider) SendReceipt(ctx context.Context, m Message) (string, error) {
+	for _, tag := range m.PushoverTags {
+		if !pushoverTagPattern.MatchString(tag) {
+			return "", Permanent(errPushoverTag)
+		}
+	}
 	answer, code, err := p.post(ctx, pushoverAPIURL, "pushover messages", p.form(m))
 	if err != nil {
 		return "", err
@@ -205,9 +214,15 @@ func (p *PushoverProvider) SendReceipt(ctx context.Context, m Message) (string, 
 	return answer.Receipt, nil
 }
 
-// pushoverReceiptPattern is what Ward accepts as a receipt: Pushover's are
-// 30 letters and digits, and one goes into a URL path.
+// pushoverReceiptPattern is what kit takes for a receipt: Pushover's are 30
+// letters and digits, and one goes into a URL path.
 var pushoverReceiptPattern = regexp.MustCompile(`^[A-Za-z0-9]{1,64}$`)
+
+// pushoverTagPattern is what kit takes for a tag: Pushover separates tags
+// with commas, and one goes into a URL path.
+var pushoverTagPattern = regexp.MustCompile(`^[A-Za-z0-9_=-]{1,64}$`)
+
+var errPushoverTag = errors.New("pushover: a tag is 1 to 64 letters, digits, '-', '_' or '='")
 
 // pushoverLimitedWait is how long a rate-limited receipt call waits when
 // Pushover does not say.
@@ -227,8 +242,26 @@ func (p *PushoverProvider) CancelReceipt(ctx context.Context, receipt string) er
 	if !pushoverReceiptPattern.MatchString(receipt) {
 		return Permanent(errors.New("pushover: a receipt is 1 to 64 letters and digits"))
 	}
-	what := "pushover receipt cancel"
-	rawURL := strings.TrimSuffix(pushoverAPIURL, "messages.json") + "receipts/" + receipt + "/cancel.json"
+	return p.cancel(ctx, "receipts/"+receipt+"/cancel.json", "pushover receipt cancel")
+}
+
+// CancelByTag stops the repeats of every emergency-priority message the
+// application sent with tag (Message.PushoverTags) that still repeats (POST
+// receipts/cancel_by_tag/{tag}.json with the application's token): each copy
+// of a message sent twice, whose first receipt was never known, included.
+// Its answers are classified as CancelReceipt's are. A tag that is not one is
+// refused before any request.
+func (p *PushoverProvider) CancelByTag(ctx context.Context, tag string) error {
+	if !pushoverTagPattern.MatchString(tag) {
+		return Permanent(errPushoverTag)
+	}
+	return p.cancel(ctx, "receipts/cancel_by_tag/"+tag+".json", "pushover tag cancel")
+}
+
+// cancel posts the token to the receipts endpoint at path (under the API's
+// /1/) and classifies the answer for CancelReceipt and CancelByTag.
+func (p *PushoverProvider) cancel(ctx context.Context, path, what string) error {
+	rawURL := strings.TrimSuffix(pushoverAPIURL, "messages.json") + path
 	v := url.Values{}
 	v.Set("token", p.c.Token)
 	answer, code, err := p.post(ctx, rawURL, what, v)
