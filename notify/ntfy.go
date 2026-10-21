@@ -54,6 +54,10 @@ type ntfyMessage struct {
 	Priority int          `json:"priority,omitempty"`
 	Tags     []string     `json:"tags,omitempty"`
 	Actions  []ntfyAction `json:"actions,omitempty"`
+	// SequenceID names the notification on the phone: a later message with
+	// the same one replaces it (ntfy 2.16 and later; older servers ignore
+	// the field).
+	SequenceID string `json:"sequence_id,omitempty"`
 }
 
 // ntfyAction is one action button: "view" opens url, "http" makes the app
@@ -102,14 +106,21 @@ func (p *NtfyProvider) priority(m Message) int {
 // and the body as the message (the subject alone is the message when there is
 // no body). Link actions become view buttons and HTTP actions http buttons,
 // at most three in all, in order; callback actions have no ntfy form and are
-// left out. A refused button (no label or URL) or a 4xx other than 408 and
-// 429 is a permanent error. No error names the topic, its path or the token.
+// left out. A message with an NtfySequenceID is published under it, so it
+// replaces the notification published before with the same one. A refused
+// button (no label or URL), a sequence id ntfy would refuse, or a 4xx other
+// than 408 and 429 is a permanent error; StatusCode reads an answer's
+// status. No error names the topic, its path or the token.
 func (p *NtfyProvider) Send(ctx context.Context, m Message) error {
 	publishURL, topic, err := ntfyEndpoint(p.c.URL)
 	if err != nil {
 		return Permanent(err)
 	}
-	msg := ntfyMessage{Topic: topic, Message: m.Body, Title: m.Subject, Priority: p.priority(m), Tags: p.c.Tags}
+	if m.NtfySequenceID != "" && !ntfyTopicPattern.MatchString(m.NtfySequenceID) {
+		return Permanent(errors.New("ntfy: a sequence id is 1 to 64 letters, digits, '-' or '_'"))
+	}
+	msg := ntfyMessage{Topic: topic, Message: m.Body, Title: m.Subject, Priority: p.priority(m), Tags: p.c.Tags,
+		SequenceID: m.NtfySequenceID}
 	if m.Body == "" {
 		msg.Message, msg.Title = m.Subject, ""
 	}
@@ -130,24 +141,53 @@ func (p *NtfyProvider) Send(ctx context.Context, m Message) error {
 	if err != nil {
 		return err
 	}
-	host := urlredact.Host(publishURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, publishURL, bytes.NewReader(body))
+	return p.do(ctx, http.MethodPost, publishURL, "ntfy publish", topic, body)
+}
+
+// Clear dismisses the notification published under sequenceID from the
+// phones subscribed to the topic, marking it read (PUT
+// <topic>/<sequenceID>/clear, ntfy 2.16 and later; an older server answers
+// 404, which is permanent). Its answers are classified as Send's are.
+func (p *NtfyProvider) Clear(ctx context.Context, sequenceID string) error {
+	publishURL, topic, err := ntfyEndpoint(p.c.URL)
 	if err != nil {
-		return fmt.Errorf("ntfy publish %w", urlredact.Error(publishURL, err))
+		return Permanent(err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if !ntfyTopicPattern.MatchString(sequenceID) {
+		return Permanent(errors.New("ntfy: a sequence id is 1 to 64 letters, digits, '-' or '_'"))
+	}
+	u, err := url.Parse(publishURL)
+	if err != nil {
+		return Permanent(errors.New("ntfy: topic URL must be http(s)://<server>/<topic>"))
+	}
+	u.Path += topic + "/" + sequenceID + "/clear"
+	return p.do(ctx, http.MethodPut, u.String(), "ntfy clear", topic, nil)
+}
+
+// do sends one request to the topic's server and classifies the answer
+// (httpStatusError, with ntfy's own explanation kept). what names the
+// request; no error quotes the URL, the topic or the token.
+func (p *NtfyProvider) do(ctx context.Context, method, rawURL, what, topic string, body []byte) error {
+	host := urlredact.Host(rawURL)
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("%s %w", what, urlredact.Error(rawURL, err))
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if p.c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+p.c.Token)
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("ntfy publish %w", urlredact.Error(publishURL, err))
+		return fmt.Errorf("%s %w", what, urlredact.Error(rawURL, err))
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		err := httpStatusError("ntfy publish "+host, resp.StatusCode)
+		err := httpStatusError(what+" "+host, resp.StatusCode)
 		// ntfy explains a refusal as {"code":40301,"http":403,"error":"..."}.
 		var e struct {
 			Error string `json:"error"`

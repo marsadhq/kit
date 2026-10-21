@@ -70,6 +70,13 @@ type Message struct {
 	// Telegram counts its 4096-character limit after the markup is parsed.
 	// Other providers ignore it.
 	TelegramHTML string
+	// NtfySequenceID, when non-empty, is the sequence id the ntfy provider
+	// publishes the message under (1 to 64 letters, digits, '-' or '_'): a
+	// later message with the same id replaces the notification on the phone,
+	// and NtfyProvider.Clear dismisses it (ntfy 2.16 and later; an older
+	// server ignores it and shows each message on its own). Other providers
+	// ignore it.
+	NtfySequenceID string
 }
 
 // Priority is how urgently a message should reach its reader, on ntfy's
