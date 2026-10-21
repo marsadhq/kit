@@ -108,6 +108,16 @@ func BuildProvider(kind ChannelType, cfg []byte) (Provider, error) {
 		}
 		return NewPushover(c), nil
 
+	case Twilio:
+		var c TwilioConfig
+		if err := json.Unmarshal(cfg, &c); err != nil {
+			return nil, fmt.Errorf("notify: twilio config: %w", err)
+		}
+		if err := c.validate(); err != nil {
+			return nil, fmt.Errorf("notify: twilio config: %w", err)
+		}
+		return NewTwilio(c), nil
+
 	default:
 		return nil, fmt.Errorf("notify: unknown channel kind %q", kind)
 	}
