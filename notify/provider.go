@@ -1,11 +1,11 @@
 // Package notify delivers notifications: the Provider contract, the Message
 // a provider sends, the providers themselves (webhook, Slack, Discord, SMTP,
-// Telegram, ntfy, Pushover), BuildProvider to make one from a channel's JSON
+// Telegram, ntfy, Pushover, Twilio phone calls), BuildProvider to make one from a channel's JSON
 // configuration, and the durable delivery Worker that drives a tool's own
 // delivery queue with leases, retries and a give-up hook.
 //
 // Credentials live in URLs (webhook, Slack and Discord paths, ntfy topics),
-// in the Telegram bot path, and in request bodies; no error a provider
+// in the Telegram bot path, in request bodies and in Twilio's basic auth; no error a provider
 // returns ever contains one, so the worker may log errors as they are.
 //
 // The package knows nothing about a tool's events, channels or tables: the
@@ -38,6 +38,9 @@ const (
 	Ntfy ChannelType = "ntfy"
 	// Pushover sends a push through the Pushover messages API.
 	Pushover ChannelType = "pushover"
+	// Twilio places phone calls (and sends text messages) through a Twilio
+	// account's REST API.
+	Twilio ChannelType = "twilio"
 )
 
 // Message is a notification ready to be delivered by a Provider: a rendered
