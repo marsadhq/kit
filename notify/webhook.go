@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -128,12 +129,30 @@ func (p *DiscordProvider) Send(ctx context.Context, m Message) error {
 
 // discordEscape backslash-escapes, in text the tool did not mark up, the
 // characters Discord builds a masked link ([label](url), which shows a label
-// of the sender's choosing) and mention-like constructs (<@123>, <#123>,
-// <@&123>) from: \ [ ] < >. Discord shows them as typed. A plain URL stays a
-// link to itself.
+// of the sender's choosing), mention-like constructs (<@123>, <#123>,
+// <@&123>) and code from: \ [ ] < > and the backtick, which would otherwise
+// open or close a code block, the one the Output is shown in included.
+// Discord shows them as typed. URLs (discordURL) are left as they are: they
+// stay links to themselves, with the brackets of an IPv6 host or a query
+// intact, and Discord forms no masked link inside one.
 func discordEscape(s string) string {
-	return strings.NewReplacer(`\`, `\\`, "[", `\[`, "]", `\]`, "<", `\<`, ">", `\>`).Replace(s)
+	var b strings.Builder
+	last := 0
+	for _, m := range discordURL.FindAllStringIndex(s, -1) {
+		b.WriteString(discordEscaper.Replace(s[last:m[0]]))
+		b.WriteString(s[m[0]:m[1]])
+		last = m[1]
+	}
+	b.WriteString(discordEscaper.Replace(s[last:]))
+	return b.String()
 }
+
+var discordEscaper = strings.NewReplacer(`\`, `\\`, "[", `\[`, "]", `\]`, "<", `\<`, ">", `\>`, "`", "\\`")
+
+// discordURL matches a URL as discordEscape leaves it: http or https, up to
+// white space, an angle bracket or a backtick, which are escaped wherever
+// they are.
+var discordURL = regexp.MustCompile("https?://[^\\s<>`]+")
 
 // DiscordOutputLength is how much of Discord's limit Output s takes once the
 // Discord provider sends it: its UTF-16 code units, a backtick counting
