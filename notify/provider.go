@@ -63,6 +63,13 @@ type Message struct {
 	// kinds it supports and leaves out the rest (see ActionKind); a provider
 	// with no buttons ignores them all.
 	Actions []Action
+	// TelegramHTML, when non-empty, is the text the Telegram provider sends
+	// in place of Subject and Body, with parse_mode HTML: Telegram's HTML
+	// subset (<b>, <a href>, ...), written by the tool, which must escape
+	// every piece of text it did not write itself (html.EscapeString does).
+	// Telegram counts its 4096-character limit after the markup is parsed.
+	// Other providers ignore it.
+	TelegramHTML string
 }
 
 // Priority is how urgently a message should reach its reader, on ntfy's
