@@ -141,6 +141,33 @@ func (p *TelegramProvider) Edit(ctx context.Context, msg TelegramMessage, m Mess
 	return err
 }
 
+// ErrNotDeletable is the error Delete returns for a message Telegram will
+// not delete: sent more than 48 hours ago, or not one the bot may delete in
+// its chat. It is permanent.
+var ErrNotDeletable = errors.New("the message can no longer be deleted")
+
+// Delete deletes a message the bot sent (deleteMessage). A bot may delete
+// its own messages of the last 48 hours in a private chat, a group or a
+// supergroup; in a channel it needs the right to post there.
+//
+// A message Telegram no longer has was deleted already: a success. One it
+// will not delete is ErrNotDeletable. A 429 asks for its retry_after
+// (RetryAfter); other 4xx answers are permanent. No error carries the token.
+func (p *TelegramProvider) Delete(ctx context.Context, msg TelegramMessage) error {
+	_, desc, err := p.call(ctx, "deleteMessage", map[string]any{"chat_id": msg.ChatID, "message_id": msg.MessageID})
+	if err == nil {
+		return nil
+	}
+	d := strings.ToLower(desc)
+	switch {
+	case strings.Contains(d, "message to delete not found"):
+		return nil
+	case strings.Contains(d, "message can't be deleted"):
+		return Permanent(fmt.Errorf("telegram deleteMessage: %w", ErrNotDeletable))
+	}
+	return err
+}
+
 // telegramText is the text part of a sendMessage or editMessageText
 // payload: TelegramHTML with parse_mode HTML, else the subject and body.
 func telegramText(m Message) map[string]any {
