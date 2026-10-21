@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -54,3 +55,29 @@ func TestProvidersReportRejectionsAsPermanent(t *testing.T) {
 		srv.Close()
 	}
 }
+
+// TestStatusCode: the HTTP status of a refused request is readable through
+// any wrapping, the error text stays what it was, and an error that is no
+// HTTP answer (a transport failure) has none.
+func TestStatusCode(t *testing.T) {
+	for _, code := range []int{400, 404, 408, 429, 500, 503} {
+		err := httpStatusError("ntfy publish ntfy.test", code)
+		wrapped := RetryLater(errors.Join(errors.New("context"), err), 0)
+		for _, e := range []error{err, wrapped} {
+			if got, ok := StatusCode(e); !ok || got != code {
+				t.Errorf("StatusCode(%v) = %d, %v; want %d", e, got, ok, code)
+			}
+		}
+		if want := "ntfy publish ntfy.test: status " + itoa(code); err.Error() != want {
+			t.Errorf("error text = %q, want %q", err, want)
+		}
+	}
+	if code, ok := StatusCode(errors.New("dial tcp: connection refused")); ok || code != 0 {
+		t.Errorf("StatusCode of a transport error = %d, %v", code, ok)
+	}
+	if _, ok := StatusCode(nil); ok {
+		t.Error("StatusCode(nil) reported a status")
+	}
+}
+
+func itoa(n int) string { return fmt.Sprint(n) }
