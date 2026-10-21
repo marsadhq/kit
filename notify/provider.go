@@ -77,6 +77,13 @@ type Message struct {
 	// server ignores it and shows each message on its own). Other providers
 	// ignore it.
 	NtfySequenceID string
+	// PushoverTags, on an emergency-priority message (PriorityUrgent), are
+	// sent as Pushover's tags (each 1 to 64 letters, digits, '-', '_' or
+	// '='), so PushoverProvider.CancelByTag can stop the message's repeats
+	// without its receipt: every copy, should it be sent twice. Pushover
+	// takes no tags below emergency priority, and other providers ignore
+	// them.
+	PushoverTags []string
 }
 
 // Priority is how urgently a message should reach its reader, on ntfy's

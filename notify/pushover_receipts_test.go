@@ -170,3 +170,96 @@ func TestPushoverCancelRefusesABadReceipt(t *testing.T) {
 		t.Fatalf("%d requests for bad receipts", len(*calls))
 	}
 }
+
+// TestPushoverTags: an emergency message's tags are sent as Pushover's
+// comma-separated tags; without tags the request is what it always was;
+// below emergency priority Pushover takes no tags and none are sent.
+func TestPushoverTags(t *testing.T) {
+	calls := pushoverAPI(t, func(string) (int, http.Header, string) {
+		return 200, nil, `{"status":1,"request":"r","receipt":"` + testReceipt + `"}`
+	})
+	p := NewPushover(PushoverConfig{Token: "app-token", User: "user-key"})
+	m := Message{Subject: "Disk full", Body: "db-1", Priority: PriorityUrgent}
+	if err := p.Send(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	m.PushoverTags = []string{"ward-12-abc", "team=ops"}
+	if err := p.Send(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	plain, tagged := (*calls)[0].form, (*calls)[1].form
+	if plain.Has("tags") || tagged.Get("tags") != "ward-12-abc,team=ops" {
+		t.Fatalf("tags: without %q, with %q", plain.Get("tags"), tagged.Get("tags"))
+	}
+	tagged.Del("tags")
+	if tagged.Encode() != plain.Encode() {
+		t.Fatalf("tags changed the rest of the request: %v vs %v", tagged, plain)
+	}
+	m.Priority = PriorityHigh
+	if err := p.Send(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	if (*calls)[2].form.Has("tags") {
+		t.Fatal("tags sent below emergency priority")
+	}
+}
+
+// TestPushoverRefusesBadTags: a tag Pushover would split or that cannot go
+// into a URL path is refused before anything is sent.
+func TestPushoverRefusesBadTags(t *testing.T) {
+	calls := pushoverAPI(t, func(string) (int, http.Header, string) { return 200, nil, `{"status":1}` })
+	p := NewPushover(PushoverConfig{Token: "t", User: "u"})
+	for _, tag := range []string{"", "a,b", "a/b", "a b", "../x", strings.Repeat("a", 65)} {
+		err := p.Send(context.Background(), Message{Subject: "s", Priority: PriorityUrgent, PushoverTags: []string{tag}})
+		if err == nil || !IsPermanent(err) {
+			t.Errorf("tag %q: Send = %v, want permanent", tag, err)
+		}
+		if err := p.CancelByTag(context.Background(), tag); err == nil || !IsPermanent(err) {
+			t.Errorf("tag %q: CancelByTag = %v, want permanent", tag, err)
+		}
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("%d requests for bad tags", len(*calls))
+	}
+}
+
+// TestPushoverCancelByTag: a form POST of the token alone to
+// receipts/cancel_by_tag/{tag}.json, which stops every emergency message
+// of the application with that tag; its answers are classified as
+// CancelReceipt's are.
+func TestPushoverCancelByTag(t *testing.T) {
+	calls := pushoverAPI(t, func(string) (int, http.Header, string) { return 200, nil, `{"status":1,"canceled":2,"request":"r"}` })
+	p := NewPushover(PushoverConfig{Token: "app-token", User: "user-key"})
+	if err := p.CancelByTag(context.Background(), "ward-12-abc"); err != nil {
+		t.Fatalf("CancelByTag: %v", err)
+	}
+	c := (*calls)[0]
+	if c.method != http.MethodPost || c.path != "/1/receipts/cancel_by_tag/ward-12-abc.json" || c.form.Encode() != (url.Values{"token": {"app-token"}}).Encode() {
+		t.Fatalf("cancel by tag = %s %s %v", c.method, c.path, c.form)
+	}
+	for _, x := range []struct {
+		status    int
+		header    http.Header
+		permanent bool
+		wait      time.Duration
+	}{
+		{400, nil, true, 0},
+		{429, http.Header{"Retry-After": {"30"}}, false, 30 * time.Second},
+		{502, nil, false, 5 * time.Second},
+	} {
+		pushoverAPI(t, func(string) (int, http.Header, string) {
+			return x.status, x.header, `{"status":0,"errors":["app-token odd"]}`
+		})
+		err := p.CancelByTag(context.Background(), "ward-12-abc")
+		if err == nil || IsPermanent(err) != x.permanent || strings.Contains(err.Error(), "app-token") {
+			t.Errorf("status %d: err = %v", x.status, err)
+			continue
+		}
+		if after, ok := RetryAfter(err); !x.permanent && (!ok || after != x.wait) {
+			t.Errorf("status %d: RetryAfter = %v, %v; want %v", x.status, after, ok, x.wait)
+		}
+		if code, ok := StatusCode(err); !ok || code != x.status {
+			t.Errorf("status %d: StatusCode = %d, %v", x.status, code, ok)
+		}
+	}
+}
