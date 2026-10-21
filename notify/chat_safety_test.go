@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/marsadhq/kit/notify"
@@ -88,13 +89,13 @@ func TestSlackShowsOutputInACodeBlock(t *testing.T) {
 // The content itself is what it was.
 func TestDiscordAllowsNoMentions(t *testing.T) {
 	raw, got := discordSend(t, notify.Message{Subject: "Job failed: @everyone", Body: "<@123> @here"})
-	if got.Content != "Job failed: @everyone\n<@123> @here" {
+	if got.Content != "Job failed: @everyone\n\\<@123\\> @here" {
 		t.Errorf("content = %q", got.Content)
 	}
 	if got.AllowedMentions == nil || got.AllowedMentions.Parse == nil || len(got.AllowedMentions.Parse) != 0 {
 		t.Errorf("allowed_mentions = %+v, want parse: []", got.AllowedMentions)
 	}
-	if want := `{"content":"Job failed: @everyone\n\u003c@123\u003e @here","allowed_mentions":{"parse":[]}}`; raw != want {
+	if want := `{"content":"Job failed: @everyone\n\\\u003c@123\\\u003e @here","allowed_mentions":{"parse":[]}}`; raw != want {
 		t.Errorf("body =\n%s\nwant\n%s", raw, want)
 	}
 }
@@ -140,5 +141,60 @@ func TestWithOutputInBody(t *testing.T) {
 	}
 	if m := (notify.Message{Body: "b"}).WithOutputInBody(); m.Body != "b" {
 		t.Errorf("no output: %q", m.Body)
+	}
+}
+
+// Discord renders [label](url) as a link showing a label of the sender's
+// choosing, and <@123>, <#123> and <@&123> as mentions. Subject and body text
+// can come from anyone (an alert's title, a job's name), so the characters
+// those are built from (\ [ ] < >) are backslash-escaped there: Discord shows
+// them as typed, and a plain URL stays a link to itself.
+func TestDiscordEscapesLinksAndMentions(t *testing.T) {
+	_, got := discordSend(t, notify.Message{
+		Subject: "Heartbeat missed: [re-login](https://evil.example)",
+		Body:    `<#42> \[x\] see https://tend.example/runs/1`,
+	})
+	want := `Heartbeat missed: \[re-login\](https://evil.example)` + "\n" + `\<#42\> \\\[x\\\] see https://tend.example/runs/1`
+	if got.Content != want {
+		t.Errorf("content =\n%q\nwant\n%q", got.Content, want)
+	}
+}
+
+// utf16Len is how Discord counts a message's length.
+func utf16Len(s string) int { return len(utf16.Encode([]rune(s))) }
+
+// Discord counts its 2000-character limit in UTF-16 code units, so a
+// character outside the Basic Multilingual Plane (most emoji) counts twice.
+func TestDiscordCountsUTF16(t *testing.T) {
+	_, got := discordSend(t, notify.Message{Subject: "s", Body: "b", Output: strings.Repeat("😀", 1500) + "end"})
+	if n := utf16Len(got.Content); n > 2000 || !strings.HasSuffix(got.Content, "end\n```") {
+		t.Errorf("content: %d UTF-16 units, ends %q; want at most 2000 and the output's end", n, got.Content[len(got.Content)-12:])
+	}
+	_, plain := discordSend(t, notify.Message{Subject: "s", Body: strings.Repeat("😀", 1500)})
+	if n := utf16Len(plain.Content); n > 2000 {
+		t.Errorf("long body: %d UTF-16 units, want at most 2000", n)
+	}
+}
+
+// DiscordOutputRoom and DiscordOutputLength let a tool fit its output itself
+// (and choose what to keep): output whose length is the room is sent whole;
+// one more and the provider cuts it from its start.
+func TestDiscordOutputRoom(t *testing.T) {
+	if n := notify.DiscordOutputLength("`é😀"); n != 5 {
+		t.Errorf("DiscordOutputLength = %d, want 5 (a backtick is sent with a zero-width space, 😀 is two units)", n)
+	}
+	m := notify.Message{Subject: "Job failed: [x]", Body: strings.Repeat("b", 1500)}
+	room := notify.DiscordOutputRoom(m)
+	out := strings.Repeat("a`", room/3) + strings.Repeat("c", room%3)
+	if notify.DiscordOutputLength(out) != room {
+		t.Fatalf("test output length %d, want %d", notify.DiscordOutputLength(out), room)
+	}
+	m.Output = out
+	if _, got := discordSend(t, m); !strings.Contains(got.Content, "\n```\n"+strings.ReplaceAll(out, "`", "`\u200b")+"\n```") || utf16Len(got.Content) != 2000 {
+		t.Errorf("output that fits the room was not sent whole (%d units)", utf16Len(got.Content))
+	}
+	m.Output = out + "d"
+	if _, got := discordSend(t, m); !strings.Contains(got.Content, "\n```\n…") || utf16Len(got.Content) > 2000 {
+		t.Errorf("output one unit over the room was not cut from its start")
 	}
 }
