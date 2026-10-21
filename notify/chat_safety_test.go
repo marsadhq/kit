@@ -198,3 +198,34 @@ func TestDiscordOutputRoom(t *testing.T) {
 		t.Errorf("output one unit over the room was not cut from its start")
 	}
 }
+
+// A subject or body with backticks in it (a job named "nightly ```") must not
+// open or close a code block: the output's block would then end early and
+// what follows render as markup. Backticks are escaped there too.
+func TestDiscordEscapesBackticks(t *testing.T) {
+	_, got := discordSend(t, notify.Message{Subject: "Job failed: nightly ```", Body: "Last output:",
+		Output: "[re-login](https://evil.example)"})
+	want := "Job failed: nightly \\`\\`\\`\nLast output:\n```\n[re-login](https://evil.example)\n```"
+	if got.Content != want {
+		t.Errorf("content =\n%q\nwant\n%q", got.Content, want)
+	}
+}
+
+// A URL is left as it is, so it stays a working link: escaping the brackets
+// of an IPv6 host or a query would break it. Discord reads a URL as a link to
+// itself, so no masked link can form inside one.
+func TestDiscordLeavesURLsAsTheyAre(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{
+		{"https://[2001:db8::1]:8080/runs/17", "https://[2001:db8::1]:8080/runs/17"},
+		{"http://tend.example/runs?x[a]=1 and [x]", `http://tend.example/runs?x[a]=1 and \[x\]`},
+		{"[re-login](https://evil.example) see http://[2001:db8::1]/heartbeats/4",
+			`\[re-login\](https://evil.example) see http://[2001:db8::1]/heartbeats/4`},
+		{"<https://tend.example/runs/1>", `\<https://tend.example/runs/1\>`},
+		{"https://tend.example/```", "https://tend.example/\\`\\`\\`"},
+	} {
+		_, got := discordSend(t, notify.Message{Subject: "s", Body: tc.body})
+		if got.Content != "s\n"+tc.want {
+			t.Errorf("body %q: content %q, want %q", tc.body, got.Content, "s\n"+tc.want)
+		}
+	}
+}
