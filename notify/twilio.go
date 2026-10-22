@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -136,11 +137,21 @@ func (c TwilioConfig) validate() error {
 	}
 	if c.APIBase != "" {
 		u, err := url.Parse(c.APIBase)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || u.RawQuery != "" {
-			return errors.New("api_base is not an http(s) URL")
+		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
+			!(u.Scheme == "https" || u.Scheme == "http" && loopbackHost(u.Hostname())) {
+			return errors.New("api_base is not an https URL (or an http one on this machine, for tests)")
 		}
 	}
 	return nil
+}
+
+// loopbackHost reports whether host is localhost or a loopback address.
+func loopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // TwilioProvider places calls and sends texts through Twilio's REST API.

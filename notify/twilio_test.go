@@ -520,6 +520,8 @@ func TestBuildProviderTwilio(t *testing.T) {
 		{`{"account_sid":"` + testAccountSID + `","auth_token":"` + testAuthToken + `","from":"` + testFrom + `","voice":"a b"}`, "voice"},
 		{`{"account_sid":"` + testAccountSID + `","auth_token":"` + testAuthToken + `","from":"` + testFrom + `","language":"english!"}`, "language"},
 		{`{"account_sid":"` + testAccountSID + `","auth_token":"` + testAuthToken + `","from":"` + testFrom + `","api_base":"ftp://x"}`, "api_base"},
+		{`{"account_sid":"` + testAccountSID + `","auth_token":"` + testAuthToken + `","from":"` + testFrom + `","api_base":"http://api.example.com"}`, "api_base"},
+		{`{"account_sid":"` + testAccountSID + `","auth_token":"` + testAuthToken + `","from":"` + testFrom + `","api_base":"https://api.example.com/#x"}`, "api_base"},
 	} {
 		_, err := BuildProvider(Twilio, []byte(c.cfg))
 		if err == nil || !strings.Contains(err.Error(), c.mention) {
@@ -528,6 +530,16 @@ func TestBuildProviderTwilio(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), testAuthToken) {
 			t.Errorf("error %q quotes the token", err)
+		}
+	}
+}
+
+// TestTwilioAPIBase: an API root is https, or http on this machine only (a
+// test's fake): never plain http elsewhere, with credentials in a request.
+func TestTwilioAPIBase(t *testing.T) {
+	for _, ok := range []string{"https://api.example.com", "http://127.0.0.1:8080", "http://localhost:1234", "http://[::1]:9"} {
+		if _, err := BuildProvider(Twilio, []byte(`{"account_sid":"`+testAccountSID+`","auth_token":"t","from":"`+testFrom+`","api_base":"`+ok+`"}`)); err != nil {
+			t.Errorf("api_base %s refused: %v", ok, err)
 		}
 	}
 }
