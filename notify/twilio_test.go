@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // Fictional values: a 555-01xx number, made-up SIDs and a token.
@@ -431,7 +432,7 @@ func TestTwiML(t *testing.T) {
 		String()
 	want := `<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="2"/>` +
 		`<Gather input="dtmf" numDigits="1" timeout="5" action="https://ward.example.com/twilio/voice/a.b?x=1&amp;y=2" method="POST">` +
-		`<Say voice="alice" language="en-GB">Disk &lt;full> &amp; "hot" on db-1's host ]]&gt;</Say><Pause length="1"/></Gather>` +
+		`<Say voice="alice" language="en-GB">Disk &lt;full&gt; &amp; "hot" on db-1's host ]]&gt;</Say><Pause length="1"/></Gather>` +
 		`<Say>Goodbye.</Say></Response>`
 	if got != want {
 		t.Fatalf("TwiML\n%s\nwant\n%s", got, want)
@@ -572,4 +573,53 @@ func TestTwilioSendFitsTwilio(t *testing.T) {
 	if strings.Contains(last, "….") || !strings.Contains(last, "…</Say>") {
 		t.Fatalf("a cut subject:\n%s", last)
 	}
+}
+
+// TestFitTwiMLTextCountsAsSent: what FitTwiMLText keeps takes, escaped as
+// Say escapes it, no more than its room, whatever the text holds ("]]>"
+// included); and Send's call with such text fits Twilio's limit.
+func TestFitTwiMLTextCountsAsSent(t *testing.T) {
+	for _, c := range []struct {
+		text string
+		room int
+	}{
+		{strings.Repeat("&&]]>", 300), 3900},
+		{strings.Repeat(">", 2000), 1000},
+		{strings.Repeat("]]>", 1000), 500},
+		{"a]]>b", 3},
+	} {
+		if got := FitTwiMLText(c.text, c.room); len(xmlText(got)) > c.room {
+			t.Errorf("FitTwiMLText(%.15q…, %d) escapes to %d bytes", c.text, c.room, len(xmlText(got)))
+		}
+	}
+	f := newFakeTwilio(t, func(twilioRequest) twilioAnswer { return twilioAnswer{status: 201, body: callJSON("queued")} })
+	p := f.provider(func(c *TwilioConfig) { c.To = testTo })
+	if err := p.Send(context.Background(), Message{Subject: strings.Repeat("&&]]>", 60), Body: strings.Repeat("&&]]>", 200)}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if tw := f.requests()[0].form.Get("Twiml"); len(tw) > TwilioMaxTwiML {
+		t.Fatalf("TwiML of %d bytes", len(tw))
+	}
+}
+
+// FuzzFitTwiMLText: for any text and room, the kept text escapes to at
+// most room bytes (for a room that holds the cut mark), is valid UTF-8,
+// and is a prefix of the text up to the mark.
+func FuzzFitTwiMLText(f *testing.F) {
+	for _, seed := range []string{"]]>", "&&]]>", "a]]>b]]>c", "]]]>>", "<>&\"'", "\U0001F4DE]]>", "plain text", ""} {
+		f.Add(strings.Repeat(seed, 50), 120)
+		f.Add(seed, 4)
+	}
+	f.Fuzz(func(t *testing.T, text string, room int) {
+		if room < len("…") || room > 1<<16 || !utf8.ValidString(text) {
+			return
+		}
+		got := FitTwiMLText(text, room)
+		if n := len(xmlText(got)); n > room {
+			t.Fatalf("FitTwiMLText(%q, %d) = %q, which escapes to %d bytes", text, room, got, n)
+		}
+		if !utf8.ValidString(got) || !strings.HasPrefix(text, strings.TrimSuffix(got, "…")) && got != text {
+			t.Fatalf("FitTwiMLText(%q, %d) = %q, not a cut of the text", text, room, got)
+		}
+	})
 }
