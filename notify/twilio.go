@@ -170,6 +170,9 @@ type TwilioCall struct {
 	// AnsweredBy is "human" or "machine..." only when answering machine
 	// detection was asked for (kit never asks); "" otherwise.
 	AnsweredBy string
+	// EndedNow, in what EndCall returns, reports that this EndCall ended
+	// the call (false: it was over already, by itself).
+	EndedNow bool
 }
 
 // Ended reports whether the call is over: completed, busy, no-answer,
@@ -283,8 +286,9 @@ func (p *TwilioProvider) CallStatus(ctx context.Context, sid string) (TwilioCall
 // an answered one is hung up (Status=completed), and one that is over is
 // left as it is. A call answered between the read and the cancel is then
 // hung up; a refusal of the update for a call that, read again, is over is
-// no failure. It returns the call as the last answer showed it. Its errors
-// are classified as PlaceCall's.
+// no failure. It returns the call as the last answer showed it, with
+// EndedNow set when this ended it. Its errors are classified as
+// PlaceCall's.
 func (p *TwilioProvider) EndCall(ctx context.Context, sid string) (TwilioCall, error) {
 	if !twilioCallPattern.MatchString(sid) {
 		return TwilioCall{}, Permanent(errTwilioCallSID)
@@ -311,6 +315,7 @@ func (p *TwilioProvider) EndCall(ctx context.Context, sid string) (TwilioCall, e
 			return c, err
 		}
 		c = next
+		c.EndedNow = c.Ended()
 		if c.Ended() || status == TwilioCompleted || c.Status != TwilioInProgress {
 			return c, nil
 		}
