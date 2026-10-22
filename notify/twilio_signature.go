@@ -44,19 +44,60 @@ func TwilioSignature(authToken, fullURL string, params url.Values) string {
 }
 
 // ValidTwilioSignature reports whether signature is Twilio's for a request to
-// fullURL with params (TwilioSignature), compared in constant time. An empty
-// token or signature is never valid.
+// fullURL with params (TwilioSignature), compared in constant time. Twilio
+// signs an https callback without its port, and its own SDKs accept a
+// signature over the URL with or without it: so does this, trying the URL
+// as given, without its port, and with its scheme's default port (443 for
+// https, 80 for http) where it names none. The scheme, host, path and query
+// must match. An empty token or signature is never valid.
 func ValidTwilioSignature(authToken, fullURL string, params url.Values, signature string) bool {
 	if authToken == "" || signature == "" {
-		return false
-	}
-	want, err := base64.StdEncoding.DecodeString(TwilioSignature(authToken, fullURL, params))
-	if err != nil {
 		return false
 	}
 	got, err := base64.StdEncoding.DecodeString(signature)
 	if err != nil {
 		return false
 	}
-	return hmac.Equal(got, want)
+	valid := false
+	for _, u := range signedURLs(fullURL) {
+		want, err := base64.StdEncoding.DecodeString(TwilioSignature(authToken, u, params))
+		// Every form is checked, so the time taken says nothing of which.
+		if err == nil && hmac.Equal(got, want) {
+			valid = true
+		}
+	}
+	return valid
+}
+
+// signedURLs are the forms of rawURL a signature may be over: as given,
+// without its port, and with its scheme's default port where it names none.
+// Only the authority changes; the rest is kept byte for byte.
+func signedURLs(rawURL string) []string {
+	out := []string{rawURL}
+	scheme, rest, ok := strings.Cut(rawURL, "://")
+	if !ok {
+		return out
+	}
+	end := strings.IndexAny(rest, "/?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	authority, tail := rest[:end], rest[end:]
+	if strings.Contains(authority, "@") {
+		return out
+	}
+	host, port := authority, ""
+	if i := strings.LastIndexByte(authority, ':'); i >= 0 && !strings.Contains(authority[i:], "]") {
+		host, port = authority[:i], authority[i+1:]
+	}
+	if port != "" {
+		return append(out, scheme+"://"+host+tail)
+	}
+	switch strings.ToLower(scheme) {
+	case "https":
+		out = append(out, scheme+"://"+host+":443"+tail)
+	case "http":
+		out = append(out, scheme+"://"+host+":80"+tail)
+	}
+	return out
 }
