@@ -191,13 +191,40 @@ func (p *TwilioProvider) Send(ctx context.Context, m Message) error {
 	}
 	text := SpeakableText(m.Subject, 300)
 	if body := SpeakableText(m.WithOutputInBody().Body, 1000); body != "" {
-		if text != "" && !strings.ContainsAny(text[len(text)-1:], ".!?") {
+		if r, _ := utf8.DecodeLastRuneInString(text); text != "" && !strings.ContainsRune(".!?…", r) {
 			text += "."
 		}
 		text = strings.TrimSpace(text + " " + body)
 	}
-	_, err := p.PlaceCall(ctx, p.c.To, NewTwiML().Pause(1).Say(text, p.c.Voice, p.c.Language).String())
+	// What the call says must fit Twilio's limit once escaped, however
+	// much of it is markup: cut it to the room the rest leaves.
+	room := TwilioMaxTwiML - len(NewTwiML().Pause(1).Say("x", p.c.Voice, p.c.Language).String()) + len("x")
+	twiml := NewTwiML().Pause(1).Say(FitTwiMLText(text, room), p.c.Voice, p.c.Language).String()
+	_, err := p.PlaceCall(ctx, p.c.To, twiml)
 	return err
+}
+
+// FitTwiMLText returns text cut so that, escaped as TwiML text (Say does),
+// it takes at most room bytes; a cut is marked "…".
+func FitTwiMLText(text string, room int) string {
+	if len(xmlText(text)) <= room {
+		return text
+	}
+	const mark = "…"
+	used := len(mark)
+	var b strings.Builder
+	for _, r := range text {
+		w := len(xmlText(string(r)))
+		if used+w > room {
+			break
+		}
+		used += w
+		b.WriteRune(r)
+	}
+	if b.Len() == 0 && used > room {
+		return ""
+	}
+	return strings.TrimRight(b.String(), " ") + mark
 }
 
 // PlaceCall calls to (E.164) from the configured number, the call doing what
@@ -218,7 +245,8 @@ func (p *TwilioProvider) PlaceCall(ctx context.Context, to, twiml string) (strin
 	case strings.TrimSpace(twiml) == "":
 		return "", Permanent(errors.New("twilio: a call needs TwiML"))
 	case len(twiml) > TwilioMaxTwiML:
-		return "", Permanent(fmt.Errorf("twilio: the call's TwiML is %d characters, over Twilio's %d", len(twiml), TwilioMaxTwiML))
+		return "", Permanent(fmt.Errorf("twilio: the call's TwiML is %d bytes, over Twilio's limit of %d characters (kit counts bytes)",
+			len(twiml), TwilioMaxTwiML))
 	}
 	v := url.Values{}
 	v.Set("To", to)
@@ -446,8 +474,36 @@ func (t *TwiML) Say(text, voice, language string) *TwiML {
 	if language != "" {
 		t.b.WriteString(` language="` + xmlEscape(language) + `"`)
 	}
-	t.b.WriteString(">" + xmlEscape(text) + "</Say>")
+	t.b.WriteString(">" + xmlText(text) + "</Say>")
 	return t
+}
+
+// xmlText escapes s as XML text: '&' and '<', and '>' where it would close
+// "]]>"; characters XML cannot hold become U+FFFD, as encoding/xml does.
+// Quotes need no escaping in text, which keeps escaped text short (an
+// attribute is escaped in full, xmlEscape).
+func xmlText(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		switch {
+		case r == '&':
+			b.WriteString("&amp;")
+		case r == '<':
+			b.WriteString("&lt;")
+		case r == '>' && strings.HasSuffix(s[:i], "]]"):
+			b.WriteString("&gt;")
+		case !xmlChar(r): // an invalid byte decodes as U+FFFD, which stays
+			b.WriteRune('\uFFFD')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// xmlChar reports whether r may appear in an XML 1.0 document.
+func xmlChar(r rune) bool {
+	return r == 0x09 || r == 0x0A || r == 0x0D || r >= 0x20 && r <= 0xD7FF || r >= 0xE000 && r <= 0xFFFD || r >= 0x10000 && r <= 0x10FFFF
 }
 
 // Pause waits seconds (left out when not positive).

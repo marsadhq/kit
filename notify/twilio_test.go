@@ -425,13 +425,13 @@ func TestTwiML(t *testing.T) {
 	got := NewTwiML().
 		Pause(2).
 		Gather(TwilioGather{Action: "https://ward.example.com/twilio/voice/a.b?x=1&y=2", NumDigits: 1, Timeout: 5}, func(g *TwiML) {
-			g.Say(`Disk <full> & "hot" on db-1's host`, "alice", "en-GB").Pause(1)
+			g.Say(`Disk <full> & "hot" on db-1's host ]]>`, "alice", "en-GB").Pause(1)
 		}).
 		Say("Goodbye.", "", "").
 		String()
 	want := `<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="2"/>` +
 		`<Gather input="dtmf" numDigits="1" timeout="5" action="https://ward.example.com/twilio/voice/a.b?x=1&amp;y=2" method="POST">` +
-		`<Say voice="alice" language="en-GB">Disk &lt;full&gt; &amp; &#34;hot&#34; on db-1&#39;s host</Say><Pause length="1"/></Gather>` +
+		`<Say voice="alice" language="en-GB">Disk &lt;full> &amp; "hot" on db-1's host ]]&gt;</Say><Pause length="1"/></Gather>` +
 		`<Say>Goodbye.</Say></Response>`
 	if got != want {
 		t.Fatalf("TwiML\n%s\nwant\n%s", got, want)
@@ -541,5 +541,35 @@ func TestTwilioAPIBase(t *testing.T) {
 		if _, err := BuildProvider(Twilio, []byte(`{"account_sid":"`+testAccountSID+`","auth_token":"t","from":"`+testFrom+`","api_base":"`+ok+`"}`)); err != nil {
 			t.Errorf("api_base %s refused: %v", ok, err)
 		}
+	}
+}
+
+// TestTwilioSendFitsTwilio: whatever a message holds, Send's TwiML fits
+// Twilio's 4000 characters (the text cut to fit once escaped), so a long
+// or markup-heavy message is still a call; a cut text ends in "…" alone.
+func TestTwilioSendFitsTwilio(t *testing.T) {
+	f := newFakeTwilio(t, func(twilioRequest) twilioAnswer { return twilioAnswer{status: 201, body: callJSON("queued")} })
+	p := f.provider(func(c *TwilioConfig) { c.To = testTo })
+	for _, m := range []Message{
+		{Subject: strings.Repeat("&", 300), Body: strings.Repeat("&", 1000)},
+		{Subject: "quotes", Body: strings.Repeat(`"`, 1000)},
+		{Subject: "emoji", Body: strings.Repeat("\U0001F4DE", 1000)},
+		{Subject: strings.Repeat("a ", 200), Body: strings.Repeat("<b>", 500)},
+	} {
+		if err := p.Send(context.Background(), m); err != nil {
+			t.Errorf("Send(%.20q…): %v", m.Body, err)
+		}
+	}
+	for _, r := range f.requests() {
+		if tw := r.form.Get("Twiml"); len(tw) > TwilioMaxTwiML || strings.Contains(tw, "….") {
+			t.Errorf("TwiML of %d bytes:\n%.200s", len(tw), tw)
+		}
+	}
+	if err := p.Send(context.Background(), Message{Subject: strings.Repeat("word ", 100)}); err != nil {
+		t.Fatal(err)
+	}
+	last := f.requests()[len(f.requests())-1].form.Get("Twiml")
+	if strings.Contains(last, "….") || !strings.Contains(last, "…</Say>") {
+		t.Fatalf("a cut subject:\n%s", last)
 	}
 }
