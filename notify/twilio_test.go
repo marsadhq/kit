@@ -623,3 +623,34 @@ func FuzzFitTwiMLText(f *testing.F) {
 		}
 	})
 }
+
+// TestTwilioSIDShapes: an account or API key SID is AC or SK and 32 letters
+// or digits: Twilio's own (hexadecimal) and the placeholders its
+// documentation shows both pass; anything else is refused.
+func TestTwilioSIDShapes(t *testing.T) {
+	hex := strings.Repeat("0f", 16) // a real-shaped one, built: no literal
+	for _, ok := range []string{"AC" + hex, "AC" + strings.ToUpper(hex), "ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", testAccountSID} {
+		if !ValidTwilioAccountSID(ok) {
+			t.Errorf("account SID %q refused", ok)
+		}
+	}
+	for _, bad := range []string{"", "AC", "AC123", "AC" + hex[:31], "AC" + hex + "0", "SK" + hex, "XX" + hex, "ac" + hex,
+		"AC" + hex[:31] + "-", "AC" + hex[:31] + "_", "AC" + hex[:31] + " ", " AC" + hex} {
+		if ValidTwilioAccountSID(bad) {
+			t.Errorf("account SID %q accepted", bad)
+		}
+	}
+	cfg := func(keySID string) []byte {
+		return []byte(`{"account_sid":"` + testAccountSID + `","api_key_sid":"` + keySID + `","api_key_secret":"s","from":"` + testFrom + `"}`)
+	}
+	for _, ok := range []string{"SK" + hex, "SKXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", testKeySID} {
+		if _, err := BuildProvider(Twilio, cfg(ok)); err != nil {
+			t.Errorf("API key SID %q refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"SK123", "AC" + hex, "SK" + hex[:31] + "-", "SK" + hex + "0"} {
+		if _, err := BuildProvider(Twilio, cfg(bad)); err == nil || !strings.Contains(err.Error(), "api_key_sid") {
+			t.Errorf("API key SID %q: err = %v, want it refused", bad, err)
+		}
+	}
+}
