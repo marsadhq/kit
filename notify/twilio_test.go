@@ -319,8 +319,8 @@ func TestTwilioEndCall(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Status != c.after {
-				t.Fatalf("status = %q, want %q", got.Status, c.after)
+			if got.Status != c.after || got.EndedNow != (len(c.updates) > 0) {
+				t.Fatalf("status = %q, EndedNow = %v; want %q, %v", got.Status, got.EndedNow, c.after, len(c.updates) > 0)
 			}
 			var updates []string
 			for _, r := range f.requests() {
@@ -355,7 +355,7 @@ func TestTwilioEndCallAnsweredMeanwhile(t *testing.T) {
 		return twilioAnswer{status: 200, body: callJSON(TwilioCompleted)}
 	})
 	got, err := f.provider().EndCall(context.Background(), testCallSID)
-	if err != nil || got.Status != TwilioCompleted {
+	if err != nil || got.Status != TwilioCompleted || !got.EndedNow {
 		t.Fatalf("EndCall = %+v, %v", got, err)
 	}
 	var updates []string
@@ -385,7 +385,7 @@ func TestTwilioEndCallEndedMeanwhile(t *testing.T) {
 		return twilioAnswer{status: 400, body: `{"code":21220,"message":"Call is not in-progress. Cannot redirect.","status":400}`}
 	})
 	got, err := f.provider().EndCall(context.Background(), testCallSID)
-	if err != nil || got.Status != TwilioNoAnswer {
+	if err != nil || got.Status != TwilioNoAnswer || got.EndedNow {
 		t.Fatalf("EndCall = %+v, %v; want the call's own end", got, err)
 	}
 
