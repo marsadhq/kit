@@ -483,19 +483,20 @@ func (t *TwiML) Say(text, voice, language string) *TwiML {
 	return t
 }
 
-// xmlText escapes s as XML text: '&' and '<', and '>' where it would close
-// "]]>"; characters XML cannot hold become U+FFFD, as encoding/xml does.
-// Quotes need no escaping in text, which keeps escaped text short (an
+// xmlText escapes s as XML text: '&', '<' and '>' (every one, so a rune's
+// escaped length never depends on the runes before it, which FitTwiMLText
+// counts on); characters XML cannot hold become U+FFFD, as encoding/xml
+// does. Quotes need no escaping in text, which keeps escaped text short (an
 // attribute is escaped in full, xmlEscape).
 func xmlText(s string) string {
 	var b strings.Builder
-	for i, r := range s {
+	for _, r := range s {
 		switch {
 		case r == '&':
 			b.WriteString("&amp;")
 		case r == '<':
 			b.WriteString("&lt;")
-		case r == '>' && strings.HasSuffix(s[:i], "]]"):
+		case r == '>':
 			b.WriteString("&gt;")
 		case !xmlChar(r): // an invalid byte decodes as U+FFFD, which stays
 			b.WriteRune('\uFFFD')
