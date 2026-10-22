@@ -61,3 +61,34 @@ func TestTwilioSignature(t *testing.T) {
 		}
 	}
 }
+
+// TestTwilioSignaturePorts: Twilio signs an https callback without its port
+// (and its SDKs accept the URL with and without it), so a signature over
+// the URL as given, without its port, or with the scheme's default port
+// added is accepted; another port, host or scheme is not.
+func TestTwilioSignaturePorts(t *testing.T) {
+	params := url.Values{"CallSid": {testCallSID}, "Digits": {"1"}}
+	sig := func(u string) string { return TwilioSignature(testAuthToken, u, params) }
+	for _, c := range []struct {
+		given, signed string
+		ok            bool
+	}{
+		{"https://ward.example.com:8443/twilio/voice/tok", "https://ward.example.com:8443/twilio/voice/tok", true},
+		{"https://ward.example.com:8443/twilio/voice/tok", "https://ward.example.com/twilio/voice/tok", true},
+		{"https://ward.example.com/twilio/voice/tok", "https://ward.example.com:443/twilio/voice/tok", true},
+		{"https://ward.example.com:443/twilio/voice/tok", "https://ward.example.com/twilio/voice/tok", true},
+		{"http://ward.example.com/twilio/voice/tok", "http://ward.example.com:80/twilio/voice/tok", true},
+		{"https://[2001:db8::1]:8443/twilio/voice/tok", "https://[2001:db8::1]/twilio/voice/tok", true},
+		{"https://ward.example.com/twilio/voice/tok?x=1", "https://ward.example.com:443/twilio/voice/tok?x=1", true},
+		{"https://ward.example.com:8443/twilio/voice/tok", "https://ward.example.com:9443/twilio/voice/tok", false},
+		{"https://ward.example.com/twilio/voice/tok", "https://ward.example.com:8443/twilio/voice/tok", false},
+		{"https://ward.example.com/twilio/voice/tok", "http://ward.example.com/twilio/voice/tok", false},
+		{"https://ward.example.com/twilio/voice/tok", "http://ward.example.com:443/twilio/voice/tok", false},
+		{"https://ward.example.com/twilio/voice/tok", "https://other.example.com/twilio/voice/tok", false},
+		{"https://ward.example.com/twilio/voice/tok", "https://ward.example.com:443/twilio/voice/tol", false},
+	} {
+		if got := ValidTwilioSignature(testAuthToken, c.given, params, sig(c.signed)); got != c.ok {
+			t.Errorf("given %s, signed %s: %v, want %v", c.given, c.signed, got, c.ok)
+		}
+	}
+}
